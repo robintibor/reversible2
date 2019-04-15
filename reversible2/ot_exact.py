@@ -1,7 +1,7 @@
 import numpy as np
 import torch as th
 import ot
-from reversible.util import ensure_on_same_device, np_to_var, var_to_np
+from reversible2.util import ensure_on_same_device, np_to_var, var_to_np
 
 def ot_euclidean_loss_for_samples(samples_a, samples_b):
     diffs = samples_a.unsqueeze(1) - samples_b.unsqueeze(0)

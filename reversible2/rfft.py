@@ -1,6 +1,7 @@
 import torch as th
 from torch import nn
-from reversible.revnet import SubsampleSplitter, invert
+from reversible2.splitter import SubsampleSplitter
+from reversible2.invert import invert
 
 class RFFT(nn.Module):
     def forward(self, x):
