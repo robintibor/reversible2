@@ -2,7 +2,8 @@ from torch import autograd
 import torch as th
 from torch import nn
 
-def gradient_penalty(critic, real_data, generated_data, y=None):
+
+def gradient_penalty(critic, real_data, generated_data, y=None, max_grad=1):
     batch_size = real_data.size()[0]
 
     # Calculate interpolation
@@ -15,23 +16,28 @@ def gradient_penalty(critic, real_data, generated_data, y=None):
     interpolated = interpolated.detach().requires_grad_(True)
     if real_data.is_cuda:
         interpolated = interpolated.cuda()
+    return gradient_penalty_at_points(
+        critic=critic, points=interpolated, y=y, max_grad=max_grad
+    )
 
-    # Calculate score of interpolated examples
+
+def gradient_penalty_at_points(critic, points, y=None, max_grad=1):
     if y is None:
-        score_interpolated = critic(interpolated)
+        score = critic(points)
     else:
-        score_interpolated = critic(interpolated, y)
+        score = critic(points, y)
 
     # Calculate gradients of scores with respect to examples
-    gradients = autograd.grad(outputs=score_interpolated, inputs=interpolated,
-                           grad_outputs=th.ones(score_interpolated.size()).cuda()
-                           if real_data.is_cuda else th.ones(
-                               score_interpolated.size()),
-                           create_graph=True, retain_graph=True)[0]
+    gradients = autograd.grad(
+        outputs=score,
+        inputs=points,
+        grad_outputs=th.ones(score.size(), device=score.device),
+        create_graph=True,
+        retain_graph=True,
+    )[0]
 
     # Derivatives of the gradient close to 0 can cause problems because of
     # the square root, so manually calculate norm and add epsilon
     gradients_norm = th.sqrt(th.sum(gradients ** 2, dim=1) + 1e-12)
-
     # Return gradient penalty
-    return (nn.functional.relu(gradients_norm - 1) ** 2).mean()
+    return (nn.functional.relu(gradients_norm - max_grad) ** 2).mean()

@@ -4,10 +4,12 @@ import torch as th
 class AffineBlock(th.nn.Module):
     def __init__(self, FA, GA, FM, GM, switched_order=True, eps=0):
         super(AffineBlock, self).__init__()
-        self.FA = FA
+        # first G before F, only to have consistent ordering of
+        # parameter list compared to other code
         self.GA = GA
-        self.FM = FM
+        self.FA = FA
         self.GM = GM
+        self.FM = FM
         self.switched_order = switched_order
         self.eps = eps # is used in inverse
 

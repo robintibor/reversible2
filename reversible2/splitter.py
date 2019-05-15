@@ -58,10 +58,8 @@ class SubsampleSplitter(th.nn.Module):
                 one_chan_features.size()[1] // (
                         self.stride[0] * self.stride[1]),
                 one_chan_features.size()[2] * self.stride[0],
-                one_chan_features.size()[3] * self.stride[1])
-            if features.is_cuda:
-                previous_features = previous_features.cuda()
-            previous_features = th.autograd.Variable(previous_features)
+                one_chan_features.size()[3] * self.stride[1],
+            device=features.device)
 
             n_chans_before = previous_features.size()[1]
             cur_chan = 0

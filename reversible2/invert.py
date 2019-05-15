@@ -42,21 +42,36 @@ def invert(feature_model, features, return_all=False, residual_iterations=7):
                 else:
                     all_features.append(th.cat((x1, x2), dim=1))
             else:
-                assert False, "assume switched order"
+                x2 = y2
+                if module.GA is not None:
+                    x2 = x2 - module.GA(y1)
+                if module.GM is not None:
+                    x2 = x2 / th.exp(module.GM(y1) + module.eps)
+                all_features.append(th.cat((y1, x2), dim=1))
+                x1 = y1
+                if module.FA is not None:
+                    x1 = x1 - module.FA(x2)
+                if module.FM is not None:
+                    x1 = x1 / th.exp(module.FM(x2) + module.eps)
+                all_features.append(th.cat((x1, x2), dim=1))
+
+
             features = th.cat((x1, x2), dim=1)
-        if module.__class__.__name__ == 'ResidualBlock':
+        elif module.__class__.__name__ == 'ResidualBlock':
             x = features.detach()  # initial guess
             with th.no_grad():
                 for _ in range(residual_iterations):
                     x = features - module.F(x)
             # do a final step to get gradients
             features = features - module.F(x)
-        if module.__class__.__name__ == 'ConstantPad2d':
+        elif module.__class__.__name__ == 'ConstantPad2d':
             assert len(module.padding) == 4
             left, right, top, bottom = module.padding  # see pytorch docs
             features = features[:, :, top:-bottom, left:-right]  # see pytorch docs
         elif hasattr(module, 'invert'):
             features = module.invert(features)
+        else:
+            raise ValueError("Cannot invert {:s}".format(str(module)))
         if return_all:
             if not module.__class__.__name__ in [
                 'AffineBlock', 'AdditiveBlock', 'MultiplicativeBlock']:

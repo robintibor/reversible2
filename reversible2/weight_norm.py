@@ -3,26 +3,31 @@ Weight Normalization from https://arxiv.org/abs/1602.07868
 """
 from torch.nn.parameter import Parameter
 from torch import _weight_norm, norm_except_dim
+import torch as th
 
 
 class WeightNorm(object):
-    def __init__(self, name, dim, fixed_norm):
+    def __init__(self, name, dim, fixed_norm, fixed_log_norm):
         if dim is None:
             dim = -1
         self.name = name
         self.dim = dim
         self.fixed_norm =fixed_norm
+        self.fixed_log_norm = fixed_log_norm
 
     def compute_weight(self, module):
-        if self.fixed_norm is None:
+        if (self.fixed_norm is None) and (self.fixed_log_norm is None):
             g = getattr(module, self.name + '_g')
         else:
-            g = self.fixed_norm
+            if self.fixed_norm is not None:
+                g = self.fixed_norm
+            else:
+                g = th.exp(self.fixed_log_norm)
         v = getattr(module, self.name + '_v')
         return _weight_norm(v, g, self.dim)
 
     @staticmethod
-    def apply(module, name, dim, fixed_norm):
+    def apply(module, name, dim, fixed_norm, fixed_log_norm):
         for k, hook in module._forward_pre_hooks.items():
             if isinstance(hook, WeightNorm) and hook.name == name:
                 raise RuntimeError("Cannot register two weight_norm hooks on "
@@ -31,7 +36,8 @@ class WeightNorm(object):
         if dim is None:
             dim = -1
 
-        fn = WeightNorm(name, dim, fixed_norm)
+        fn = WeightNorm(name, dim, fixed_norm=fixed_norm,
+                        fixed_log_norm=fixed_log_norm)
 
         weight = getattr(module, name)
 
@@ -61,7 +67,8 @@ class WeightNorm(object):
         setattr(module, self.name, self.compute_weight(module))
 
 
-def weight_norm(module, name='weight', dim=0, fixed_norm=None):
+def weight_norm(module, name='weight', dim=0, fixed_norm=None,
+                fixed_log_norm=None):
     r"""Applies weight normalization to a parameter in the given module.
 
     .. math::
@@ -99,7 +106,8 @@ def weight_norm(module, name='weight', dim=0, fixed_norm=None):
         torch.Size([40, 20])
 
     """
-    WeightNorm.apply(module, name, dim, fixed_norm=fixed_norm)
+    WeightNorm.apply(module, name, dim, fixed_norm=fixed_norm,
+                     fixed_log_norm=fixed_log_norm)
     return module
 
 
