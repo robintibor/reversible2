@@ -40,6 +40,7 @@ class Node(nn.Module):
 
     def invert(self, x):
         # determine starting module
+        # ps are predecessors
         cur_ps = [self]
         starting_m = None
         while starting_m is None:
@@ -81,7 +82,6 @@ class Node(nn.Module):
             # wrap into sequential if necessary
             module = self.module
             if module.__class__.__name__ != nn.Sequential.__name__:
-
                 module = nn.Sequential(module)
             x = invert(module, ys)
             self.cur_in = x

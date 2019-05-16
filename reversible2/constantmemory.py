@@ -147,7 +147,6 @@ class AdditiveBlockFunction(torch.autograd.Function):
 
         GWeights = [p for p in Gm.parameters()]
         if not ctx.keep_input:
-            x = Fm.ctx_dict[id(ctx)].pop('x')
             # recompute x
             with torch.no_grad():
                 y1, y2 = torch.chunk(output, 2, dim=1)
@@ -165,7 +164,6 @@ class AdditiveBlockFunction(torch.autograd.Function):
                 del y1,y2
         else:
             x1, x2 = torch.chunk(x, 2, dim=1)
-        Fm.ctx_dict.clear()
 
 
         with torch.set_grad_enabled(True):
@@ -192,10 +190,13 @@ class AdditiveBlockFunction(torch.autograd.Function):
             y2.set_()
             del y1, y2
 
-            # restore input
-            # Will also restore it for the previous module in the chain!!
-            # This makes backward possible
-            x.set_(torch.cat([x1, x2], dim=1).contiguous())
+            if not ctx.keep_input:
+                x = Fm.ctx_dict[id(ctx)].pop('x')
+                # restore input
+                # Will also restore it for the previous module in the chain!!
+                # This makes backward possible
+                x.set_(torch.cat([x1, x2], dim=1).contiguous())
+        Fm.ctx_dict[id(ctx)].clear()
 
         return (grad_input, None, None, None, None) + FWgrads + GWgrads
 
@@ -297,6 +298,7 @@ class AdditiveBlockInverseFunction(torch.autograd.Function):
 
 
         # reconstruct the output
+
         GWeights = [p for p in Gm.parameters()]
         if not ctx.final_block:
             # recompute xc
@@ -316,9 +318,8 @@ class AdditiveBlockInverseFunction(torch.autograd.Function):
                 del x1, x2
         else:
             y1, y2 = torch.chunk(output, 2, dim=1)
-        Fm.ctx_dict.clear()
-        #x2 = y2 - Gm.forward(y1)
-        #        x1 = y1 - Fm.forward(x2)
+        Fm.ctx_dict[id(ctx)].clear()
+
         with torch.set_grad_enabled(True):
             # compute outputs building a sub-graph
             y1.requires_grad = True
@@ -347,9 +348,16 @@ class AdditiveBlockInverseFunction(torch.autograd.Function):
             x2.set_()
             del x1, x2
 
-            # restore input
-            # Will also restore it for the previous module in the chain!!
-            # This makes backward possible
-            output.set_(torch.cat([y1, y2], dim=1).contiguous())
+            if not ctx.final_block:
+                # restore input
+                # Will also restore it for the previous module in the chain!!
+                # This makes backward possible
+                output.set_(torch.cat([y1, y2], dim=1).contiguous())
 
         return (grad_input, None, None, None, None) + FWgrads + GWgrads
+
+
+def clear_ctx_dicts(model):
+    for m in model.modules():
+        if hasattr(m, 'ctx_dict'):
+            m.ctx_dict.clear()
