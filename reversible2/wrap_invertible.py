@@ -89,6 +89,7 @@ class WrapInvertibleFunction(torch.autograd.Function):
         if not ctx.keep_input:
             # in this case input was deleted so restore it
             x.set_(inverted)
+        ctx.module.ctx_dict[id(ctx)].clear()
         return (grad_input, None, None, None, None)
 
 
@@ -146,4 +147,5 @@ class WrapInvertibleInverseFunction(torch.autograd.Function):
         if not ctx.final_block:
             # in this case input was deleted so restore it
             output.set_(y)
+        ctx.module.ctx_dict[id(ctx)].clear()
         return (grad_input, None, None, None, None)

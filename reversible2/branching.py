@@ -76,3 +76,11 @@ class CatChans(nn.Module):
             for i_b in range(len(bounds) - 1):
                 xs.append(y[:, bounds[i_b]:bounds[i_b + 1]])
         return xs
+
+class SwitchX1X2(nn.Module):
+    def forward(self, x):
+        x1, x2 = th.chunk(x, 2, dim=1)
+        return th.cat([x2, x1], dim=1)
+
+    def invert(self, y):
+        return self.forward(y)

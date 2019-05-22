@@ -3,12 +3,13 @@ from reversible2.gaussian import get_gauss_samples
 
 
 class TwoClassDist(object):
-    def __init__(self, n_class_dims, n_non_class_dims):
+    def __init__(self, n_class_dims, n_non_class_dims, truncate_to=3):
         super(TwoClassDist, self).__init__()
         self.class_means = th.zeros(n_class_dims, requires_grad=True)
         self.non_class_means = th.zeros(n_class_dims+n_non_class_dims, requires_grad=True)
         self.class_log_stds = th.zeros(n_class_dims, requires_grad=True)
         self.non_class_log_stds = th.zeros(n_class_dims+n_non_class_dims, requires_grad=True)
+        self.truncate_to = truncate_to
 
     def get_mean_std(self, i_class):
         cur_mean = th.cat((self.non_class_means[:i_class],
@@ -21,7 +22,7 @@ class TwoClassDist(object):
 
     def get_samples(self, i_class, n_samples):
         cur_mean, cur_std = self.get_mean_std(i_class)
-        samples = get_gauss_samples(n_samples, cur_mean, cur_std)
+        samples = get_gauss_samples(n_samples, cur_mean, cur_std, truncate_to=self.truncate_to)
         return samples
 
     def cuda(self):
@@ -56,3 +57,16 @@ class TwoClassDist(object):
             mean, covariance_matrix=
             th.diag(std ** 2))
         return cls_dist.log_prob(out)
+
+    def set_mean_std(self, i_class, mean, std):
+        self.class_means.data[i_class] = mean.data[i_class]
+        self.class_log_stds.data[i_class] = th.log(std).data[i_class]
+        if i_class == 0:
+            self.non_class_means.data[1:] = mean.data[1:]
+            self.non_class_log_stds.data[1:] = th.log(std).data[1:]
+        else:
+            assert i_class == 1
+            self.non_class_means.data[0] = mean.data[0]
+            self.non_class_log_stds.data[0] = th.log(std).data[0]
+            self.non_class_means.data[2:] = mean.data[2:]
+            self.non_class_log_stds.data[2:] = th.log(std).data[2:]
