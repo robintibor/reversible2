@@ -1,11 +1,20 @@
 import torch
 import torch.nn as nn
 import copy
+from copy import deepcopy
+from reversible2.wrap_invertible import WrapInvertible, WrapInvertibleWithParams
 
 
 class AdditiveBlockConstantMemory(nn.Module):
-    def __init__(self, Fm, Gm=None, implementation_fwd=0, implementation_bwd=0,
-                 keep_input=False, final_block=False):
+    def __init__(
+        self,
+        Fm,
+        Gm=None,
+        implementation_fwd=0,
+        implementation_bwd=0,
+        keep_input=False,
+        keep_output=False,
+    ):
         """The AdditiveBlock
         Parameters
         ----------
@@ -29,35 +38,66 @@ class AdditiveBlockConstantMemory(nn.Module):
         self.implementation_fwd = implementation_fwd
         self.implementation_bwd = implementation_bwd
         self.keep_input = keep_input
-        self.final_block = final_block
+        self.keep_output = keep_output
 
     def forward(self, x):
-        args = [x, self.keep_input, self.final_block, self.Fm, self.Gm] + [w for w in self.Fm.parameters()] + [w for w in self.Gm.parameters()]
+        grad_enabled = torch.is_grad_enabled()
+        args = (
+            [
+                x,
+                grad_enabled,
+                self.keep_input,
+                self.keep_output,
+                self.Fm,
+                self.Gm,
+            ]
+            + [w for w in self.Fm.parameters()]
+            + [w for w in self.Gm.parameters()]
+        )
 
         if self.implementation_fwd == 0:
             out = AdditiveBlockFunction.apply(*args)
         else:
-            raise NotImplementedError("Selected implementation ({}) not implemented..."
-                                      .format(self.implementation_fwd))
+            raise NotImplementedError(
+                "Selected implementation ({}) not implemented...".format(
+                    self.implementation_fwd
+                )
+            )
 
         return out
 
     def invert(self, y):
-        args = [y, self.keep_input, self.final_block, self.Fm, self.Gm] + [w for w in self.Fm.parameters()] + [w for w in self.Gm.parameters()]
-        #args = [y, self.Fm, self.Gm] + [w for w in self.Fm.parameters()] + [w for w in self.Gm.parameters()]
+        grad_enabled = torch.is_grad_enabled()
+        args = (
+            [
+                y,
+                grad_enabled,
+                self.keep_input,
+                self.keep_output,
+                self.Fm,
+                self.Gm,
+            ]
+            + [w for w in self.Fm.parameters()]
+            + [w for w in self.Gm.parameters()]
+        )
 
         if self.implementation_bwd == 0:
             x = AdditiveBlockInverseFunction.apply(*args)
         else:
-            raise NotImplementedError("Inverse for selected implementation ({}) not implemented..."
-                                      .format(self.implementation_bwd))
+            raise NotImplementedError(
+                "Inverse for selected implementation ({}) not implemented...".format(
+                    self.implementation_bwd
+                )
+            )
 
         return x
 
 
 class AdditiveBlockFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, keep_input, final_block, Fm, Gm, *weights):
+    def forward(
+        ctx, x, grad_enabled, keep_input, keep_output, Fm, Gm, *weights
+    ):
         """Forward pass for the reversible block computes:
         {x1, x2} = x
         y1 = x1 + Fm(x2)
@@ -81,14 +121,12 @@ class AdditiveBlockFunction(torch.autograd.Function):
         TorchTensors for the scope of this function
         """
         # check if possible to partition into two equally sized partitions
-        assert(x.shape[1] % 2 == 0)  # assert if proper split is possible
+        assert x.shape[1] % 2 == 0  # assert if proper split is possible
         # store partition size, Fm and Gm functions in context
         ctx.Fm = Fm
         ctx.Gm = Gm
         ctx.keep_input = keep_input
-        ctx.final_block = final_block
-
-
+        ctx.keep_output = keep_output
 
         with torch.no_grad():
             # partition in two equally sized set of channels
@@ -110,23 +148,25 @@ class AdditiveBlockFunction(torch.autograd.Function):
             y2.set_()
             del y1, y2
             if not keep_input:
-                x.set_() # robintibor@gmail.com
+                x.set_()  # robintibor@gmail.com
 
         # save the (empty) input and (non-empty) output variables
         # do not use save_for_backward to avoid the checks
         # since it will be inplace-modified
         # ... now memory leak :(
-        save_for_backward = []
-        Fm.ctx_dict[id(ctx)] = {}
-        if keep_input:
-            save_for_backward.append(x)
-        else:
-            Fm.ctx_dict[id(ctx)]['x'] = x
-        if final_block:
-            save_for_backward.append(output)
-        else:
-            Fm.ctx_dict[id(ctx)]['output'] = output
-        ctx.save_for_backward(*save_for_backward)
+        if grad_enabled:
+            save_for_backward = []
+
+            Fm.ctx_dict[id(ctx)] = {}
+            if keep_input:
+                save_for_backward.append(x)
+            else:
+                Fm.ctx_dict[id(ctx)]["x"] = x
+            if keep_output:
+                save_for_backward.append(output)
+            else:
+                Fm.ctx_dict[id(ctx)]["output"] = output
+            ctx.save_for_backward(*save_for_backward)
         return output
 
     @staticmethod
@@ -134,16 +174,15 @@ class AdditiveBlockFunction(torch.autograd.Function):
         # retrieve weight references
         Fm, Gm = ctx.Fm, ctx.Gm
 
-
         # retrieve input and output references
-        if (ctx.final_block) and (ctx.keep_input):
+        if (ctx.keep_output) and (ctx.keep_input):
             x, output = ctx.saved_tensors
-        elif (ctx.final_block):
+        elif ctx.keep_output:
             output, = ctx.saved_tensors
         elif ctx.keep_input:
             x, = ctx.saved_tensors
-        if not ctx.final_block:
-            output = Fm.ctx_dict[id(ctx)].pop('output')
+        if not ctx.keep_output:
+            output = Fm.ctx_dict[id(ctx)].pop("output")
 
         GWeights = [p for p in Gm.parameters()]
         if not ctx.keep_input:
@@ -155,16 +194,15 @@ class AdditiveBlockFunction(torch.autograd.Function):
                 y1, y2 = y1.contiguous(), y2.contiguous()
 
                 # partition output gradient also on channels
-                assert(grad_output.shape[1] % 2 == 0)
+                assert grad_output.shape[1] % 2 == 0
 
                 x2 = y2 - Gm.forward(y1)
                 x1 = y1 - Fm.forward(x2)
                 y2.set_()
                 y1.set_()
-                del y1,y2
+                del y1, y2
         else:
             x1, x2 = torch.chunk(x, 2, dim=1)
-
 
         with torch.set_grad_enabled(True):
             # compute outputs building a sub-graph
@@ -176,11 +214,15 @@ class AdditiveBlockFunction(torch.autograd.Function):
             y = torch.cat([y1, y2], dim=1)
 
             # perform full backward pass on graph...
-            dd = torch.autograd.grad(y, (x1, x2 ) + tuple(Gm.parameters()) + tuple(Fm.parameters()), grad_output)
+            dd = torch.autograd.grad(
+                y,
+                (x1, x2) + tuple(Gm.parameters()) + tuple(Fm.parameters()),
+                grad_output,
+            )
 
         with torch.no_grad():
-            GWgrads = dd[2:2+len(GWeights)]
-            FWgrads = dd[2+len(GWeights):]
+            GWgrads = dd[2 : 2 + len(GWeights)]
+            FWgrads = dd[2 + len(GWeights) :]
             grad_input = torch.cat([dd[0], dd[1]], dim=1)
 
             # cleanup sub-graph
@@ -191,19 +233,21 @@ class AdditiveBlockFunction(torch.autograd.Function):
             del y1, y2
 
             if not ctx.keep_input:
-                x = Fm.ctx_dict[id(ctx)].pop('x')
+                x = Fm.ctx_dict[id(ctx)].pop("x")
                 # restore input
                 # Will also restore it for the previous module in the chain!!
                 # This makes backward possible
                 x.set_(torch.cat([x1, x2], dim=1).contiguous())
         Fm.ctx_dict[id(ctx)].clear()
 
-        return (grad_input, None, None, None, None) + FWgrads + GWgrads
+        return (grad_input, None, None, None, None, None) + FWgrads + GWgrads
 
 
 class AdditiveBlockInverseFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, y, keep_input, final_block, Fm, Gm, *weights):
+    def forward(
+        ctx, y, grad_enabled, keep_input, keep_output, Fm, Gm, *weights
+    ):
         """Forward pass for the reversible block computes:
         {y1, y2} = y
         x2 = y2 - Gm(y1)
@@ -228,15 +272,12 @@ class AdditiveBlockInverseFunction(torch.autograd.Function):
         """
         # check if possible to partition into two equally sized partitions
 
-
-        assert(y.shape[1] % 2 == 0)  # assert if proper split is possible
+        assert y.shape[1] % 2 == 0  # assert if proper split is possible
         # store partition size, Fm and Gm functions in context
         ctx.Fm = Fm
         ctx.Gm = Gm
         ctx.keep_input = keep_input
-        ctx.final_block = final_block
-
-
+        ctx.keep_output = keep_output
 
         with torch.no_grad():
             # partition in two equally sized set of channels
@@ -257,25 +298,25 @@ class AdditiveBlockInverseFunction(torch.autograd.Function):
             x1.set_()
             x2.set_()
             del x1, x2
-            if not ctx.final_block:
-                y.set_() # robintibor@gmail.com
+            if not ctx.keep_output:
+                y.set_()  # robintibor@gmail.com
 
-        # save the (empty) input and (non-empty) output variables
-        # do not use save_for_backward to avoid the checks
-        # since it will be inplace-modified
-        save_for_backward = []
-        Fm.ctx_dict[id(ctx)] = {}
-        if keep_input:
-            save_for_backward.append(x)
-        else:
-            Fm.ctx_dict[id(ctx)]['x'] = x
-        if final_block:
-            save_for_backward.append(y)
-        else:
-            Fm.ctx_dict[id(ctx)]['output'] = y
-        ctx.save_for_backward(*save_for_backward)
+        if grad_enabled:
+            # save the (empty) input and (non-empty) output variables
+            # do not use save_for_backward to avoid the checks
+            # since it will be inplace-modified
+            save_for_backward = []
+            Fm.ctx_dict[id(ctx)] = {}
+            if keep_input:
+                save_for_backward.append(x)
+            else:
+                Fm.ctx_dict[id(ctx)]["x"] = x
+            if keep_output:
+                save_for_backward.append(y)
+            else:
+                Fm.ctx_dict[id(ctx)]["output"] = y
+            ctx.save_for_backward(*save_for_backward)
         return x
-
 
     @staticmethod
     def backward(ctx, grad_output):
@@ -283,24 +324,23 @@ class AdditiveBlockInverseFunction(torch.autograd.Function):
         Fm, Gm = ctx.Fm, ctx.Gm
 
         # retrieve input and output references
-        if (ctx.final_block) and (ctx.keep_input):
+        if (ctx.keep_output) and (ctx.keep_input):
             x, output = ctx.saved_tensors
-        elif (ctx.final_block):
+        elif ctx.keep_output:
             output, = ctx.saved_tensors
         elif ctx.keep_input:
             x, = ctx.saved_tensors
 
         if not ctx.keep_input:
-            x = Fm.ctx_dict[id(ctx)].pop('x')
+            x = Fm.ctx_dict[id(ctx)].pop("x")
 
-        if not ctx.final_block:
-            output = Fm.ctx_dict[id(ctx)].pop('output')
-
+        if not ctx.keep_output:
+            output = Fm.ctx_dict[id(ctx)].pop("output")
 
         # reconstruct the output
 
         GWeights = [p for p in Gm.parameters()]
-        if not ctx.final_block:
+        if not ctx.keep_output:
             # recompute xc
             with torch.no_grad():
                 x1, x2 = torch.chunk(x, 2, dim=1)
@@ -309,7 +349,7 @@ class AdditiveBlockInverseFunction(torch.autograd.Function):
                 x1, x2 = x1.contiguous(), x2.contiguous()
 
                 # partition output gradient also on channels
-                assert (grad_output.shape[1] % 2 == 0)
+                assert grad_output.shape[1] % 2 == 0
 
                 y1 = x1 + Fm.forward(x2)
                 y2 = x2 + Gm.forward(y1)
@@ -332,13 +372,15 @@ class AdditiveBlockInverseFunction(torch.autograd.Function):
 
             # perform full backward pass on graph...
 
-            dd = torch.autograd.grad(x,
-                                     (y1, y2) + tuple(Gm.parameters()) + tuple(
-                                         Fm.parameters()), grad_output)
+            dd = torch.autograd.grad(
+                x,
+                (y1, y2) + tuple(Gm.parameters()) + tuple(Fm.parameters()),
+                grad_output,
+            )
 
         with torch.no_grad():
-            GWgrads = dd[2:2 + len(GWeights)]
-            FWgrads = dd[2 + len(GWeights):]
+            GWgrads = dd[2 : 2 + len(GWeights)]
+            FWgrads = dd[2 + len(GWeights) :]
             grad_input = torch.cat([dd[0], dd[1]], dim=1)
 
             # cleanup sub-graph
@@ -348,16 +390,72 @@ class AdditiveBlockInverseFunction(torch.autograd.Function):
             x2.set_()
             del x1, x2
 
-            if not ctx.final_block:
+            if not ctx.keep_output:
                 # restore input
                 # Will also restore it for the previous module in the chain!!
                 # This makes backward possible
                 output.set_(torch.cat([y1, y2], dim=1).contiguous())
 
-        return (grad_input, None, None, None, None) + FWgrads + GWgrads
+        return (grad_input, None, None, None, None, None) + FWgrads + GWgrads
 
 
 def clear_ctx_dicts(model):
     for m in model.modules():
-        if hasattr(m, 'ctx_dict'):
+        if hasattr(m, "ctx_dict"):
             m.ctx_dict.clear()
+
+
+def sequential_to_constant_memory(seq_model):
+    children = list(seq_model.children())
+    new_children = []
+    for i_c, c in enumerate(children):
+        keep_input = i_c == 0
+        keep_output = i_c == len(children) - 1
+        new_c = module_to_constant_memory(c, keep_input, keep_output)
+        new_children.append(new_c)
+    new_seq_model = nn.Sequential(*new_children)
+    assert new_seq_model[0].keep_input == True
+    assert new_seq_model[-1].keep_output == True
+    return new_seq_model
+
+
+def module_to_constant_memory(c, keep_input, keep_output):
+    c = deepcopy(c)
+    classname = c.__class__.__name__
+    if classname == "AdditiveBlock":
+        assert c.switched_order == False
+        return AdditiveBlockConstantMemory(
+            c.FA, c.GA, keep_input=keep_input, keep_output=keep_output
+        )
+    elif classname in ["SubsampleSplitter", "ViewAs"]:
+        return WrapInvertible(
+            c,
+            keep_input=keep_input,
+            keep_output=keep_output,
+            grad_is_inverse=True,
+        )
+    elif classname in ["RFFT", "IRFFT"]:
+        return WrapInvertible(
+            c,
+            keep_input=keep_input,
+            keep_output=keep_output,
+            grad_is_inverse=False,
+        )
+    elif classname in ["ScalingLayer"]:
+        return WrapInvertibleWithParams(
+            c, keep_input=keep_input, keep_output=keep_output
+        )
+    else:
+        raise ValueError(
+            "Unknown class to convert to constant memory {:s}".format(classname)
+        )
+
+
+def graph_to_constant_memory(final_node):
+    from reversible2.graph import get_all_nodes
+
+    all_nodes = get_all_nodes(final_node)
+    for n in all_nodes:
+        if n.module.__class__.__name__ == nn.Sequential.__name__:
+            n.module = sequential_to_constant_memory(n.module)
+    return final_node

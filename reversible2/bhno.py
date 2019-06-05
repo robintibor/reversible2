@@ -16,14 +16,15 @@ from reversible2.util import np_to_var
 log = logging.getLogger(__name__)
 
 
-def load_file(filename):
-    cnt = BBCIDataset(filename).load()
+def load_file(filename, car=True, load_sensor_names=None):
+    cnt = BBCIDataset(filename, load_sensor_names=load_sensor_names).load()
     cnt = cnt.drop_channels(["STI 014"])
 
-    def car(a):
-        return a - np.mean(a, keepdims=True, axis=0)
+    if car:
+        def car(a):
+            return a - np.mean(a, keepdims=True, axis=0)
 
-    cnt = mne_apply(car, cnt)
+        cnt = mne_apply(car, cnt)
     return cnt
 
 
@@ -43,19 +44,19 @@ def preprocess_cnt(cnt, final_hz, half_before):
     return cnt
 
 
-def create_set(cnt):
+def create_set(cnt, start_ms, stop_ms):
     marker_def = OrderedDict(
         [("Right Hand", [1]), ("Left Hand", [2]), ("Rest", [3]), ("Feet", [4])]
     )
-    ival = [500, 1500]
+    ival = [start_ms, stop_ms]
 
     dataset = create_signal_target_from_raw_mne(cnt, marker_def, ival)
     return dataset
 
 
-def create_inputs(cnt, final_hz, half_before):
+def create_inputs(cnt, final_hz, half_before, start_ms, stop_ms):
     cnt = preprocess_cnt(cnt, final_hz=final_hz, half_before=half_before)
-    dataset = create_set(cnt)
+    dataset = create_set(cnt, start_ms, stop_ms)
     return create_th_inputs(dataset)
 
 

@@ -3,21 +3,23 @@ from reversible2.gaussian import get_gauss_samples
 
 
 class TwoClassDist(object):
-    def __init__(self, n_class_dims, n_non_class_dims, truncate_to=3):
+    def __init__(self, n_class_dims, n_non_class_dims, i_class_inds, truncate_to=3):
         super(TwoClassDist, self).__init__()
         self.class_means = th.zeros(n_class_dims, requires_grad=True)
         self.non_class_means = th.zeros(n_class_dims+n_non_class_dims, requires_grad=True)
         self.class_log_stds = th.zeros(n_class_dims, requires_grad=True)
         self.non_class_log_stds = th.zeros(n_class_dims+n_non_class_dims, requires_grad=True)
         self.truncate_to = truncate_to
+        self.i_class_inds = i_class_inds
 
     def get_mean_std(self, i_class):
-        cur_mean = th.cat((self.non_class_means[:i_class],
+        i_i_class = self.i_class_inds[i_class]
+        cur_mean = th.cat((self.non_class_means[:i_i_class],
                            self.class_means[i_class:i_class + 1],
-                           self.non_class_means[i_class+1:]))
-        cur_log_std = th.cat((self.non_class_log_stds[:i_class],
+                           self.non_class_means[i_i_class+1:]))
+        cur_log_std = th.cat((self.non_class_log_stds[:i_i_class],
                               self.class_log_stds[i_class:i_class + 1],
-                              self.non_class_log_stds[i_class+1:]))
+                              self.non_class_log_stds[i_i_class+1:]))
         return cur_mean, th.exp(cur_log_std)
 
     def get_samples(self, i_class, n_samples):
@@ -47,9 +49,9 @@ class TwoClassDist(object):
     def get_class_log_prob(self, i_class, out,):
         mean, std = self.get_mean_std(i_class)
         cls_dist = th.distributions.MultivariateNormal(
-                mean[:len(self.class_means)], covariance_matrix=
-                th.diag(std[:len(self.class_log_stds)] ** 2))
-        return cls_dist.log_prob(out[:,:len(self.class_means)])
+                mean[self.i_class_inds], covariance_matrix=
+                th.diag(std[self.i_class_inds] ** 2))
+        return cls_dist.log_prob(out[:,self.i_class_inds])
 
     def get_total_log_prob(self, i_class, out, ):
         mean, std = self.get_mean_std(i_class)
@@ -59,14 +61,10 @@ class TwoClassDist(object):
         return cls_dist.log_prob(out)
 
     def set_mean_std(self, i_class, mean, std):
-        self.class_means.data[i_class] = mean.data[i_class]
-        self.class_log_stds.data[i_class] = th.log(std).data[i_class]
-        if i_class == 0:
-            self.non_class_means.data[1:] = mean.data[1:]
-            self.non_class_log_stds.data[1:] = th.log(std).data[1:]
-        else:
-            assert i_class == 1
-            self.non_class_means.data[0] = mean.data[0]
-            self.non_class_log_stds.data[0] = th.log(std).data[0]
-            self.non_class_means.data[2:] = mean.data[2:]
-            self.non_class_log_stds.data[2:] = th.log(std).data[2:]
+        i_i_class = self.i_class_inds[i_class]
+        self.class_means.data[i_class] = mean.data[i_i_class]
+        self.class_log_stds.data[i_class] = th.log(std).data[i_i_class]
+        self.non_class_means.data[:i_i_class] = mean.data[:i_i_class]
+        self.non_class_means.data[i_i_class+1:] = mean.data[i_i_class+1:]
+        self.non_class_log_stds.data[:i_i_class] = th.log(std).data[:i_i_class]
+        self.non_class_log_stds.data[i_i_class+1:] = th.log(std).data[i_i_class+1:]

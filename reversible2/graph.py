@@ -43,6 +43,12 @@ class Node(nn.Module):
     def invert(self, x):
         # determine starting module
         # ps are predecessors
+        starting_m = self.find_starting_node()
+        inverted = starting_m._invert(x)
+        self.remove_cur_in()
+        return inverted
+
+    def find_starting_node(self):
         cur_ps = [self]
         starting_m = None
         while starting_m is None:
@@ -54,9 +60,7 @@ class Node(nn.Module):
                 else:
                     new_cur_ps.extend(p.prev)
             cur_ps = new_cur_ps
-        inverted = starting_m._invert(x)
-        self.remove_cur_in()
-        return inverted
+        return starting_m
 
     def _invert(self, y):
         if self.cur_in is None:
@@ -147,8 +151,8 @@ class Node(nn.Module):
                                 p.data = p.data * (factor / old_factor)
                         next_x = child(x.clone())
                         final_var_x = th.var(next_x, ).item()
-                        print("Changed variance from {:.2f} to {:.2f}".format(
-                            first_var_x, final_var_x
+                        print("Changed variance from {:.2f} to {:.2f} using factor {:.1E}".format(
+                            first_var_x, final_var_x, factor
                         ))
                     x = child(x)
             else:
@@ -188,9 +192,22 @@ def data_init_sequential_module(module, x):
                 next_x = child(x.clone())
                 final_var_x = th.var(next_x, ).item()
 
-                print("Changed variance from {:.2f} to {:.2f}\nusing factor {:.1E}".format(
+                print("Changed variance from {:.2f} to {:.2f} using factor {:.1E}".format(
                     first_var_x, final_var_x, factor
                 ))
             x = child(x)
     return x
 
+
+def get_all_nodes(final_node):
+    cur_ps = [final_node]
+    all_nodes = []
+    while len(cur_ps) > 0:
+        new_cur_ps = []
+        for p in cur_ps:
+            if p.prev is not None:
+                new_cur_ps.extend(p.prev)
+            if p not in all_nodes:
+                all_nodes.append(p)
+        cur_ps = new_cur_ps
+    return all_nodes[::-1]

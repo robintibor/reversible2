@@ -21,6 +21,13 @@ class RFFT(nn.Module):
                             normalized=True)
         return inverted
 
+class IRFFT(nn.Module):
+    def forward(self, x):
+        return RFFT().invert(x)
+
+    def invert(self, y):
+        return RFFT().forward(y)
+
 
 class Interleave(nn.Module):
     def forward(self, x):

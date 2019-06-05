@@ -39,6 +39,8 @@ def gradient_penalty_at_points(critic, points, y=None, max_grad=1):
     # Derivatives of the gradient close to 0 can cause problems because of
     # the square root, so manually calculate norm and add epsilon
 
-    gradients_norm = th.norm(gradients, p=2, dim=tuple(range(gradients.ndimension()))[1:])
+    gradients_norm = th.norm(
+        gradients, p=2, dim=tuple(range(gradients.ndimension()))[1:]
+    )
     # Return gradient penalty
     return (nn.functional.relu(gradients_norm - max_grad) ** 2).mean()

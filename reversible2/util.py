@@ -105,3 +105,12 @@ def var_to_np(var):
     Should work both for CPU and GPU."""
     return var.cpu().data.numpy()
 
+def interpolate_nans_in_df(df):
+    df = df.copy()
+    for row in df:
+        series = np.array(df[row])
+        mask = np.isnan(series)
+        series[mask] = np.interp(np.flatnonzero(mask), np.flatnonzero(~mask),
+                                 series[~mask])
+        df.loc[:, row] = series
+    return df
