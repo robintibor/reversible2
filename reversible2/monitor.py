@@ -11,9 +11,13 @@ def compute_accs(feature_model, train_inputs, test_inputs, class_dist):
     with th.no_grad():
         # Compute dist for mean/std of encodings
         data_cls_dists = []
+        if hasattr(class_dist, 'i_class_inds'):
+            i_class_inds = class_dist.i_class_inds
+        else:
+            i_class_inds = list(range(len(class_dist.get_mean_std(0)[0])))
         for i_class in range(len(train_inputs)):
             this_class_outs = feature_model(train_inputs[i_class])[
-                :, class_dist.i_class_inds
+                :, i_class_inds
             ]
             data_cls_dists.append(
                 th.distributions.MultivariateNormal(
@@ -24,15 +28,15 @@ def compute_accs(feature_model, train_inputs, test_inputs, class_dist):
         results = {}
         for setname, set_inputs in (("Train", train_inputs), ("Test", test_inputs)):
             outs = [feature_model(ins) for ins in set_inputs]
-            c_outs = [o[:, class_dist.i_class_inds] for o in outs]
+            c_outs = [o[:, i_class_inds] for o in outs]
 
             cls_dists = []
             for i_class in range(len(c_outs)):
                 mean, std = class_dist.get_mean_std(i_class)
                 cls_dists.append(
                     th.distributions.MultivariateNormal(
-                        mean[class_dist.i_class_inds],
-                        covariance_matrix=th.diag(std[class_dist.i_class_inds] ** 2),
+                        mean[i_class_inds],
+                        covariance_matrix=th.diag(std[i_class_inds] ** 2),
                     )
                 )
 

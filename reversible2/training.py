@@ -99,15 +99,15 @@ class Trainer(object):
                 result["wd_d_{:d}".format(i_class)] = wd_d
             else:
                 ot_out_loss = ot_euclidean_loss_for_samples(
-                    samples[:, class_dist.i_class_inds],
-                    outs[:, class_dist.i_class_inds],
+                    samples[:, i_class_inds],
+                    outs[:, i_class_inds],
                 )
                 other_samples = class_dist.get_samples(
                     1 - i_class, len(train_inputs[1 - i_class]) * 4
                 )
                 ot_out_loss_other = ot_euclidean_loss_for_samples(
-                    other_samples[:, class_dist.i_class_inds],
-                    changed_to_other_class[:, class_dist.i_class_inds],
+                    other_samples[:, i_class_inds],
+                    changed_to_other_class[:, i_class_inds],
                 )
                 score_fake = adv_model(inverted, y)
                 score_fake_other = adv_model(other_inverted, 1 - y)
@@ -179,6 +179,11 @@ class OTTrainer(object):
         optim_feature_model.zero_grad()
         optim_class_dist.zero_grad()
         n_min = min([len(t) for t in train_inputs])
+        if hasattr(class_dist, 'i_class_inds'):
+            i_class_inds = class_dist.i_class_inds
+        else:
+            i_class_inds = list(range(len(class_dist.get_mean_std(0)[0])))
+        
         for i_class in range(len(train_inputs)):
             class_ins = train_inputs[i_class][:n_min]
             other_class_ins = train_inputs[1 - i_class][:n_min]
@@ -198,17 +203,24 @@ class OTTrainer(object):
                 other_class_ins.view(len(other_class_ins), -1),
                 other_inverted.view(len(other_inverted), -1),
             )
-            ot_out_loss = ot_euclidean_loss_for_samples(
-                samples[:, class_dist.i_class_inds],
-                outs[:, class_dist.i_class_inds],
-            )
+            if loss_on_outs:
+                ot_out_loss = ot_euclidean_loss_for_samples(
+                    outs[:, i_class_inds],
+                    samples[:, i_class_inds],
+                )
+            else:
+                ot_out_loss = th.zeros(1)
             other_samples = class_dist.get_samples(
                 1 - i_class, len(other_class_ins) * 4
             )
-            ot_out_loss_other = ot_euclidean_loss_for_samples(
-                other_samples[:, class_dist.i_class_inds],
-                changed_to_other_class[:, class_dist.i_class_inds],
-            )
+            if loss_on_outs:
+                ot_out_loss_other = ot_euclidean_loss_for_samples(
+                    changed_to_other_class[:, i_class_inds],
+                    other_samples[:, i_class_inds],
+                )
+            else:
+                ot_out_loss_other = th.zeros(1)
+
             g_loss = ot_in_loss + ot_in_loss_other
             if loss_on_outs:
                 g_loss = g_loss + ot_out_loss + ot_out_loss_other
