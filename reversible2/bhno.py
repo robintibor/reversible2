@@ -21,6 +21,7 @@ def load_file(filename, car=True, load_sensor_names=None):
     cnt = cnt.drop_channels(["STI 014"])
 
     if car:
+
         def car(a):
             return a - np.mean(a, keepdims=True, axis=0)
 
@@ -67,3 +68,55 @@ def create_th_inputs(dataset):
     inputs_b = np_to_var(x_rest[:, :, :, None], dtype=np.float32)
     inputs = [inputs_a, inputs_b]
     return inputs
+
+
+def load_train_test(
+    subject_id,
+    car,
+    n_sensors,
+    final_hz,
+    start_ms,
+    stop_ms,
+    half_before,
+    only_load_given_sensors,
+):
+
+    assert n_sensors in [2, 22]
+    if n_sensors == 2:
+        sensor_names = ["C3", "C4"]
+    else:
+        assert n_sensors == 22
+        # fmt: off
+        sensor_names = [
+            'Fz',
+            'FC3','FC1','FCz','FC2','FC4',
+            'C5','C3','C1','Cz','C2','C4','C6',
+            'CP3','CP1','CPz','CP2','CP4',
+            'P1','Pz','P2',
+            'POz']
+        # fmt: on
+    assert n_sensors == len(sensor_names)
+    if only_load_given_sensors:
+        load_sensor_names = sensor_names
+    else:
+        load_sensor_names = None
+
+    orig_train_cnt = load_file(
+        "/data/schirrmr/schirrmr/HGD-public/reduced/train/{:d}.mat".format(
+            subject_id
+        ),
+        load_sensor_names=load_sensor_names,
+        car=car,
+    )
+    train_cnt = orig_train_cnt.reorder_channels(sensor_names)
+
+    train_inputs = create_inputs(
+        train_cnt,
+        final_hz=final_hz,
+        half_before=half_before,
+        start_ms=start_ms,
+        stop_ms=stop_ms,
+    )
+    test_inputs = [t[-40:] for t in train_inputs]
+    train_inputs = [t[:-40] for t in train_inputs]
+    return train_inputs, test_inputs

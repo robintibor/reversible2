@@ -5,57 +5,24 @@ os.sys.path.insert(0, "/home/schirrmr/code/reversible/")
 os.sys.path.insert(0, "/home/schirrmr/braindecode/code/braindecode/")
 import logging
 import time
-from copy import copy
 import numpy as np
-from reversible2.sliced import sliced_from_samples
-from numpy.random import RandomState
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Variable
-import numpy as np
-import copy
-import math
-
-import itertools
 import torch as th
-from braindecode.torch_ext.util import np_to_var, var_to_np
-from reversible2.splitter import SubsampleSplitter
-
-from reversible2.view_as import ViewAs
-
-from reversible2.affine import AdditiveBlock
-from reversible2.plot import display_text, display_close
-from reversible2.bhno import load_file, create_inputs
 
 from hyperoptim.parse import (
     cartesian_dict_of_lists_product,
     product_of_list_of_lists_of_dicts,
 )
-from hyperoptim.util import save_pkl_artifact, save_npy_artifact
+from hyperoptim.util import save_pkl_artifact
 from braindecode.torch_ext.util import var_to_np, confirm_gpu_availability
-from reversible2.graph import Node
-from reversible2.branching import CatChans, ChunkChans, Select
-from reversible2.constantmemory import sequential_to_constant_memory
-from reversible2.constantmemory import graph_to_constant_memory
 
 
-from copy import deepcopy
-from reversible2.graph import Node
 from reversible2.distribution import TwoClassDist, TwoClassIndependentDist
-from reversible2.wrap_invertible import WrapInvertible
-from reversible2.blocks import dense_add_no_switch, conv_add_3x3_no_switch
-from reversible2.rfft import RFFT, Interleave
-from reversible2.util import set_random_seeds
-from torch.nn import ConstantPad2d
-import torch as th
-from reversible2.splitter import SubsampleSplitter
 from reversible2.monitor import compute_accs
 from reversible2.models import smaller_model, larger_model
 from reversible2.training import CLFTrainer
 from reversible2.classifier import SubspaceClassifier
 from reversible2.monitor import compute_clf_accs
+from reversible2.bhno import load_file, create_inputs, load_train_test
 
 
 log = logging.getLogger(__name__)
@@ -79,7 +46,7 @@ def get_grid_param_list():
     data_params = dictlistprod({"n_sensors": [22], "final_hz": [256]})
     preproc_params = dictlistprod({"half_before": [True]})
     ival_params = [{"start_ms": 500, "stop_ms": 1500}]
-    training_params = dictlistprod({"max_epochs": [1000,4000]})
+    training_params = dictlistprod({"max_epochs": [1000, 4000]})
 
     implementation_params = dictlistprod({"constant_memory": [True]})
 
@@ -87,19 +54,18 @@ def get_grid_param_list():
         {"data_zero_init": [False], "set_distribution_to_empirical": [True]}
     )
 
-    network_params = dictlistprod({"final_fft": [False]})#True
+    network_params = dictlistprod({"final_fft": [False]})  # True
 
-    clf_params = dictlistprod({"clf_loss": [None, ]})#"likelihood", None
+    clf_params = dictlistprod({"clf_loss": [None]})  # "likelihood", None
 
-    dist_params = dictlistprod({
-        'ot_on_class_dims': [False],#, True
-        'independent_class_dists': [True],
-    })
+    dist_params = dictlistprod(
+        {
+            "ot_on_class_dims": [False],  # , True
+            "independent_class_dists": [True],
+        }
+    )
 
-    save_params = [{
-        'save_model': True,
-    }]
-
+    save_params = [{"save_model": True}]
 
     grid_params = product_of_list_of_lists_of_dicts(
         [
@@ -145,43 +111,16 @@ def run_exp(
     assert final_hz in [64, 256]
 
     car = not debug
-
-    assert n_sensors in [2, 22]
-    if n_sensors == 2:
-        sensor_names = ["C3", "C4"]
-    else:
-        assert n_sensors == 22
-        # fmt: off
-        sensor_names = [
-            'Fz',
-            'FC3','FC1','FCz','FC2','FC4',
-            'C5','C3','C1','Cz','C2','C4','C6',
-            'CP3','CP1','CPz','CP2','CP4',
-            'P1','Pz','P2',
-            'POz']
-        # fmt: on
-    assert n_sensors == len(sensor_names)
-    if debug:
-        load_sensor_names = sensor_names
-    else:
-        load_sensor_names = None
-
-    orig_train_cnt = load_file(
-        "/data/schirrmr/schirrmr/HGD-public/reduced/train/{:d}.mat".format(subject_id),
-        load_sensor_names=load_sensor_names,
-        car=car,
+    train_inputs, test_inputs = load_train_test(
+        subject_id,
+        car,
+        n_sensors,
+        final_hz,
+        start_ms,
+        stop_ms,
+        half_before,
+        only_load_given_sensors=debug,
     )
-    train_cnt = orig_train_cnt.reorder_channels(sensor_names)
-
-    train_inputs = create_inputs(
-        train_cnt,
-        final_hz=final_hz,
-        half_before=half_before,
-        start_ms=start_ms,
-        stop_ms=stop_ms,
-    )
-    test_inputs = [t[-40:] for t in train_inputs]
-    train_inputs = [t[:-40] for t in train_inputs]
 
     cuda = True
     if cuda:
@@ -206,10 +145,14 @@ def run_exp(
     n_chans = train_inputs[0].shape[1]
     n_time = train_inputs[0].shape[2]
     if final_hz == 64:
-        feature_model = smaller_model(n_chans, n_time, final_fft, constant_memory)
+        feature_model = smaller_model(
+            n_chans, n_time, final_fft, constant_memory
+        )
     else:
         assert final_hz == 256
-        feature_model = larger_model(n_chans, n_time, final_fft, constant_memory)
+        feature_model = larger_model(
+            n_chans, n_time, final_fft, constant_memory
+        )
 
     if cuda:
         feature_model.cuda()
@@ -219,7 +162,9 @@ def run_exp(
     from reversible2.distribution import TwoClassDist
 
     if data_zero_init:
-        feature_model.data_init(th.cat((train_inputs[0], train_inputs[1]), dim=0))
+        feature_model.data_init(
+            th.cat((train_inputs[0], train_inputs[1]), dim=0)
+        )
 
     # Check that forward + inverse is really identical
     t_out = feature_model(train_inputs[0][:2])
@@ -229,9 +174,13 @@ def run_exp(
     from reversible2.ot_exact import ot_euclidean_loss_for_samples
 
     if independent_class_dists:
-        class_dist = TwoClassIndependentDist(np.prod(train_inputs[0].size()[1:]))
+        class_dist = TwoClassIndependentDist(
+            np.prod(train_inputs[0].size()[1:])
+        )
     else:
-        class_dist = TwoClassDist(2, np.prod(train_inputs[0].size()[1:]) - 2, [0, 1])
+        class_dist = TwoClassDist(
+            2, np.prod(train_inputs[0].size()[1:]) - 2, [0, 1]
+        )
     class_dist.cuda()
 
     if set_distribution_to_empirical:
@@ -247,8 +196,12 @@ def run_exp(
                 assert th.allclose(std, setted_std)
         clear_ctx_dicts(feature_model)
 
-    optim_model = th.optim.Adam(feature_model.parameters(), lr=1e-3, betas=(0.9, 0.999))
-    optim_dist = th.optim.Adam(class_dist.parameters(), lr=1e-2, betas=(0.9, 0.999))
+    optim_model = th.optim.Adam(
+        feature_model.parameters(), lr=1e-3, betas=(0.9, 0.999)
+    )
+    optim_dist = th.optim.Adam(
+        class_dist.parameters(), lr=1e-2, betas=(0.9, 0.999)
+    )
 
     if clf_loss is not None:
         clf = SubspaceClassifier(2, 10, np.prod(train_inputs[0].shape[1:]))
@@ -277,7 +230,7 @@ def run_exp(
     from reversible2.timer import Timer
 
     i_start_epoch_out = int(np.round(max_epochs * 0.4)) + 1
-    n_epochs = max_epochs + 1 # +1 for historical reasons.
+    n_epochs = max_epochs + 1  # +1 for historical reasons.
     if debug:
         n_epochs = 21
         i_start_epoch_out = 5
@@ -285,17 +238,25 @@ def run_exp(
         epoch_row = {}
         with Timer(name="EpochLoop", verbose=False) as loop_time:
             loss_on_outs = i_epoch >= i_start_epoch_out
-            result = trainer.train(train_inputs, loss_on_outs=(loss_on_outs and ot_on_class_dims))
+            result = trainer.train(
+                train_inputs, loss_on_outs=(loss_on_outs and ot_on_class_dims)
+            )
             if clf_loss is not None:
-                result_clf = clf_trainer.train(train_inputs, loss_on_outs=loss_on_outs)
+                result_clf = clf_trainer.train(
+                    train_inputs, loss_on_outs=loss_on_outs
+                )
                 epoch_row.update(result_clf)
 
         epoch_row.update(result)
         epoch_row["runtime"] = loop_time.elapsed_secs * 1000
-        acc_results = compute_accs(feature_model, train_inputs, test_inputs, class_dist)
+        acc_results = compute_accs(
+            feature_model, train_inputs, test_inputs, class_dist
+        )
         epoch_row.update(acc_results)
         if clf_loss is not None:
-            clf_accs = compute_clf_accs(clf, feature_model, train_inputs, test_inputs)
+            clf_accs = compute_clf_accs(
+                clf, feature_model, train_inputs, test_inputs
+            )
             epoch_row.update(clf_accs)
         if i_epoch % (n_epochs // 20) != 0:
             df = df.append(epoch_row, ignore_index=True)
@@ -311,9 +272,13 @@ def run_exp(
                     clear_ctx_dicts(feature_model)
                     ot_loss_in = ot_euclidean_loss_for_samples(
                         class_ins.view(class_ins.shape[0], -1),
-                        inverted.view(inverted.shape[0], -1)[: (len(class_ins))],
+                        inverted.view(inverted.shape[0], -1)[
+                            : (len(class_ins))
+                        ],
                     )
-                    epoch_row["ot_loss_in_{:d}".format(i_class)] = ot_loss_in.item()
+                    epoch_row[
+                        "ot_loss_in_{:d}".format(i_class)
+                    ] = ot_loss_in.item()
             df = df.append(epoch_row, ignore_index=True)
             print("Epoch {:d} of {:d}".format(i_epoch, n_epochs))
             print("Loop Time: {:.0f} ms".format(loop_time.elapsed_secs * 1000))
@@ -383,7 +348,7 @@ def run(
     ex.info["runtime"] = run_time
     save_pkl_artifact(ex, epochs_df, "epochs_df.pkl")
     if save_model:
-        save_torch_artifact(ex, feature_model, 'feature_model.pkl')
-        save_torch_artifact(ex, class_dist, 'class_dist.pkl')
+        save_torch_artifact(ex, feature_model, "feature_model.pkl")
+        save_torch_artifact(ex, class_dist, "class_dist.pkl")
 
     print("Finished!")

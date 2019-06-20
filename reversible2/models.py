@@ -12,6 +12,33 @@ from reversible2.splitter import SubsampleSplitter
 from torch import nn
 from reversible2.view_as import ViewAs
 
+
+def add_bnorm_before_relu(feature_model):
+    for m in feature_model.modules():
+        for attr in ['Fm', 'Gm', 'FA', 'GA']:
+            if hasattr(m, attr):
+                old_children = list(m._modules[attr].children())
+                new_children = []
+                bnorm_inserted = False
+                for c in old_children:
+                    if c.__class__.__name__ == 'ReLU':
+                        prev = new_children[-1]
+                        if hasattr(prev, 'out_channels'):
+                            num_features = prev.out_channels
+                            new_children.append(
+                                nn.BatchNorm2d(num_features=num_features))
+                        else:
+                            num_features = prev.out_features
+                            new_children.append(
+                                nn.BatchNorm1d(num_features=num_features))
+
+                        bnorm_inserted = True
+                    new_children.append(c)
+
+                assert bnorm_inserted
+                m._modules[attr] = nn.Sequential(*new_children)
+
+
 def smaller_model(n_chans, n_time, final_fft, constant_memory):
     base_model = nn.Sequential(
             SubsampleSplitter(stride=[2, 1], chunk_chans_first=False),  # 4 x 32

@@ -11,7 +11,7 @@ def  dense_add_no_switch(n_c, n_i_c):
     return dense_add_block(n_c, n_i_c, switched_order=False)
 
 
-def conv_add_block_3x3(n_c, n_i_c, switched_order=True):
+def conv_add_block_3x3(n_c, n_i_c, switched_order=True,):
     return AdditiveBlock(
         nn.Sequential(
             nn.Conv2d(n_c // 2, n_i_c, (3, 1), stride=1, padding=(1, 0),
