@@ -4,27 +4,36 @@ from reversible2.constantmemory import AdditiveBlockConstantMemory
 
 
 def conv_add_3x3_no_switch(n_c, n_i_c):
-    return conv_add_block_3x3(n_c, n_i_c, switched_order=False)
+    return conv_add_block(n_c, n_i_c, kernel_length=3, switched_order=False)
+
+def conv_add_no_switch(n_c, n_i_c, kernel_length,):
+    return conv_add_block(n_c, n_i_c, kernel_length=kernel_length,
+                              switched_order=False)
 
 
 def  dense_add_no_switch(n_c, n_i_c):
     return dense_add_block(n_c, n_i_c, switched_order=False)
 
 
-def conv_add_block_3x3(n_c, n_i_c, switched_order=True,):
+def conv_add_block(n_c, n_i_c, kernel_length, switched_order=True,):
+    assert kernel_length % 2 == 1
     return AdditiveBlock(
         nn.Sequential(
-            nn.Conv2d(n_c // 2, n_i_c, (3, 1), stride=1, padding=(1, 0),
+            nn.Conv2d(n_c // 2, n_i_c, (kernel_length, 1), stride=1,
+                      padding=(kernel_length//2, 0),
                       bias=True),
             nn.ReLU(),
-            nn.Conv2d(n_i_c, n_c // 2, (3, 1), stride=1, padding=(1, 0),
+            nn.Conv2d(n_i_c, n_c // 2, (kernel_length, 1), stride=1,
+                      padding=(kernel_length//2, 0),
                       bias=True)),
 
         nn.Sequential(
-            nn.Conv2d(n_c // 2, n_i_c, (3, 1), stride=1, padding=(1, 0),
+            nn.Conv2d(n_c // 2, n_i_c, (kernel_length, 1), stride=1,
+                      padding=(kernel_length//2, 0),
                       bias=True),
             nn.ReLU(),
-            nn.Conv2d(n_i_c, n_c // 2, (3, 1), stride=1, padding=(1, 0),
+            nn.Conv2d(n_i_c, n_c // 2, (kernel_length, 1), stride=1,
+                      padding=(kernel_length//2, 0),
                       bias=True)),
     switched_order=switched_order)
 

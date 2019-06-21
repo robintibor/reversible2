@@ -24,8 +24,11 @@ from reversible2.models import smaller_model, larger_model
 from reversible2.training import CLFTrainer
 from reversible2.classifier import SubspaceClassifier
 from reversible2.monitor import compute_clf_accs
-from reversible2.bhno import load_file, create_inputs, load_train_test
+from reversible2.high_gamma import load_file, create_inputs, load_train_test
 from reversible2.models import add_bnorm_before_relu
+from reversible2.models import WrappedModel
+from reversible2.models import deep_invertible
+from reversible2.scale import scale_to_unit_var
 
 
 log = logging.getLogger(__name__)
@@ -72,11 +75,12 @@ def get_grid_param_list():
     ival_params = [{"start_ms": 500, "stop_ms": 1500}]
     training_params = dictlistprod({"max_epochs": [100]})
 
-    model_params = dictlistprod({"model": ["invertible",],
+    model_params = dictlistprod({"model": ["deep_invertible",],
                                  "final_fft": [True],
-                                 "add_bnorm": [True]})  # , True
+                                 "add_bnorm": [False],})  # , True
 
-    optim_params = dictlistprod({"weight_decay": [0]})
+    optim_params = dictlistprod({"weight_decay": [0.5 * 0.001, 0.5*0.01],
+                                 "act_norm": [True, False]})
 
     save_params = [{"save_model": False}]
 
@@ -115,6 +119,7 @@ def run_exp(
     weight_decay,
     final_fft,
     add_bnorm,
+    act_norm,
 ):
     model_name = model
     del model
@@ -162,11 +167,12 @@ def run_exp(
     n_chans = train_inputs[0].shape[1]
     n_time = train_inputs[0].shape[2]
     n_classes = 2
+    input_time_length=train_set.X.shape[2]
 
     if model_name == 'shallow':
         # final_conv_length = auto ensures we only get a single output in the time dimension
         model = ShallowFBCSPNet(in_chans=n_chans, n_classes=n_classes,
-                                input_time_length=train_set.X.shape[2],
+                                input_time_length=input_time_length,
                                 final_conv_length='auto')
     elif model_name == 'deep':
         model = Deep4Net(n_chans, n_classes,
@@ -177,6 +183,27 @@ def run_exp(
     elif model_name == 'invertible':
         model = InvertibleModel(n_chans, n_time, final_fft=final_fft,
                                 add_bnorm=add_bnorm)
+    elif model_name == 'deep_invertible':
+        n_chan_pad = 0
+        filter_length_time = 11
+        model = deep_invertible(
+            n_chans, input_time_length,  n_chan_pad,  filter_length_time)
+        model.add_module("select_dims", Expression(lambda x: x[:, :2, 0]))
+        model.add_module("softmax", nn.LogSoftmax(dim=1))
+        model = WrappedModel(model)
+
+        ## set scale
+        if act_norm:
+            model.cuda()
+            for module in model.network.modules():
+                if hasattr(module, 'log_factor'):
+                    module._forward_hooks.clear()
+                    module.register_forward_hook(scale_to_unit_var)
+            model.network(train_inputs[0].cuda());
+            for module in model.network.modules():
+                if hasattr(module, 'log_factor'):
+                    module._forward_hooks.clear()
+
     else:
         assert False
     if cuda:
@@ -194,6 +221,10 @@ def run_exp(
     elif model_name == 'invertible':
         optimizer = AdamW(model.parameters(), lr=1e-4,
                           weight_decay=weight_decay)
+    elif model_name == 'deep_invertible':
+        optimizer = AdamW(model.parameters(), lr=1 * 0.001,
+                          weight_decay=weight_decay)
+
     else:
         assert False
 
@@ -237,6 +268,7 @@ def run(
     only_return_exp,
     final_fft,
     add_bnorm,
+    act_norm,
 ):
     kwargs = locals()
     kwargs.pop("ex")

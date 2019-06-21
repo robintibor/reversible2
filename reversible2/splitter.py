@@ -91,3 +91,10 @@ class SubsampleSplitter(th.nn.Module):
             all_previous_features.append(previous_features)
         features = th.cat(all_previous_features, dim=1)
         return features
+
+    def __repr__(self):
+        return ("SubsampleSplitter(stride={:s}, chunk_chans_first={:s}, "
+               "checkerboard={:s})").format(str(self.stride),
+                                           str(self.chunk_chans_first),
+                                           str(self.checkerboard))
+

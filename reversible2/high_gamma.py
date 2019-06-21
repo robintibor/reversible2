@@ -11,7 +11,9 @@ from braindecode.datautil.signalproc import (
     exponential_running_standardize,
     bandpass_cnt,
 )
-from reversible2.util import np_to_var
+from braindecode.datautil.signal_target import SignalAndTarget
+from reversible2.util import np_to_var, var_to_np
+
 
 log = logging.getLogger(__name__)
 
@@ -120,3 +122,20 @@ def load_train_test(
     test_inputs = [t[-40:] for t in train_inputs]
     train_inputs = [t[:-40] for t in train_inputs]
     return train_inputs, test_inputs
+
+
+def to_signal_target(train_inputs, test_inputs):
+    sets = []
+    for inputs in (train_inputs, test_inputs):
+        X = np.concatenate([var_to_np(ins) for ins in inputs]).astype(
+            np.float32
+        )
+        y = np.concatenate(
+            [np.ones(len(ins)) * i_class for i_class, ins in enumerate(inputs)]
+        )
+        y = y.astype(np.int64)
+        set = SignalAndTarget(X, y)
+        sets.append(set)
+    train_set = sets[0]
+    valid_set = sets[1]
+    return train_set, valid_set

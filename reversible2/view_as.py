@@ -26,3 +26,7 @@ class ViewAs(th.nn.Module):
                 )
         features = features.view(self.dims_before)
         return features
+
+    def __repr__(self):
+        return "ViewAs({:s}, {:s})".format(
+            str(self.dims_before), str(self.dims_after))
