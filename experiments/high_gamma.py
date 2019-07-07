@@ -18,11 +18,11 @@ from braindecode.torch_ext.util import var_to_np, confirm_gpu_availability
 
 from reversible2.distribution import TwoClassDist, TwoClassIndependentDist
 from reversible2.monitor import compute_accs
-from reversible2.models import smaller_model, larger_model
+from reversible2.models import smaller_model, larger_model, deep_invertible
 from reversible2.training import CLFTrainer
 from reversible2.classifier import SubspaceClassifier
 from reversible2.monitor import compute_clf_accs
-from reversible2.bhno import load_file, create_inputs, load_train_test
+from reversible2.high_gamma import load_file, create_inputs, load_train_test
 
 
 log = logging.getLogger(__name__)
@@ -37,16 +37,20 @@ def get_grid_param_list():
     dictlistprod = cartesian_dict_of_lists_product
     default_params = [
         {
-            "save_folder": "/data/schirrmr/schirrmr/reversible/experiments/for-poster-2",
+            "save_folder": "/data/schirrmr/schirrmr/reversible/experiments/new-deep-invertible",
             "only_return_exp": False,
             "debug": False,
         }
     ]
-    subject_id_params = dictlistprod({"subject_id": [4]})
+    subject_id_params = dictlistprod({"subject_id": range(4,10)})
     data_params = dictlistprod({"n_sensors": [22], "final_hz": [256]})
     preproc_params = dictlistprod({"half_before": [True]})
     ival_params = [{"start_ms": 500, "stop_ms": 1500}]
     training_params = dictlistprod({"max_epochs": [1000, 4000]})
+
+    model_params = dictlistprod({
+        "model_name": ["deep_invertible"]
+    })
 
     implementation_params = dictlistprod({"constant_memory": [True]})
 
@@ -56,7 +60,7 @@ def get_grid_param_list():
 
     network_params = dictlistprod({"final_fft": [False]})  # True
 
-    clf_params = dictlistprod({"clf_loss": [None]})  # "likelihood", None
+    clf_params = dictlistprod({"clf_loss": [None, 'sliced']})  # "likelihood", None
 
     dist_params = dictlistprod(
         {
@@ -75,6 +79,7 @@ def get_grid_param_list():
             implementation_params,
             training_params,
             init_params,
+            model_params,
             preproc_params,
             dist_params,
             ival_params,
@@ -107,6 +112,7 @@ def run_exp(
     stop_ms,
     half_before,
     final_fft,
+    model_name,
 ):
     assert final_hz in [64, 256]
 
@@ -150,9 +156,22 @@ def run_exp(
         )
     else:
         assert final_hz == 256
-        feature_model = larger_model(
-            n_chans, n_time, final_fft, constant_memory
-        )
+        if model_name == 'old_invertible':
+            feature_model = larger_model(
+                n_chans, n_time, final_fft, constant_memory
+            )
+        elif model_name == 'deep_invertible':
+            n_chan_pad = 0
+            filter_length_time = 11
+            feature_model = deep_invertible(
+                n_chans, n_time,  n_chan_pad,  filter_length_time)
+            from reversible2.view_as import ViewAs
+            feature_model.add_module('flatten',
+                                     ViewAs((-1, 176, 32), (-1, 5632)))
+            from reversible2.graph import Node
+            feature_model = Node(None, feature_model)
+        else:
+            assert False
 
     if cuda:
         feature_model.cuda()
@@ -317,6 +336,7 @@ def run(
     final_hz,
     start_ms,
     stop_ms,
+    model_name,
     final_fft,
     clf_loss,
     save_model,

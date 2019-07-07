@@ -25,6 +25,14 @@ def ot_for_diffs(diffs):
 
 def ot_euclidean_loss_memory_saving_for_samples(samples_a, samples_b):
     assert len(samples_a) <= len(samples_b)
+    b_corresponding = get_matched_samples(samples_a, samples_b)
+    loss = th.mean(
+        th.norm(samples_a.unsqueeze(1) - b_corresponding, dim=2, p=2))
+    return loss
+
+
+def get_matched_samples(samples_a, samples_b):
+    assert len(samples_a) <= len(samples_b)
     with th.no_grad():
         diffs = samples_a.unsqueeze(1) - samples_b.unsqueeze(0)
         diffs = th.sqrt(th.clamp(th.sum(diffs * diffs, dim=2), min=1e-6))
@@ -35,9 +43,8 @@ def ot_euclidean_loss_memory_saving_for_samples(samples_a, samples_b):
     b_corresponding = []
     for i_row in range(transport_mat.shape[0]):
         matches = np.flatnonzero(transport_mat[i_row])
-        if len(matches) == 0: return th.zeros(1, device=samples_a.device) # dunno why that happens
+        if len(matches) == 0: return th.zeros(1,
+                                              device=samples_a.device)  # dunno why that happens
         b_corresponding.append(samples_b[matches])
     b_corresponding = th.stack(b_corresponding, dim=0)
-    loss = th.mean(
-        th.norm(samples_a.unsqueeze(1) - b_corresponding, dim=2, p=2))
-    return loss
+    return b_corresponding

@@ -1,5 +1,6 @@
 import torch as th
 from reversible2.gaussian import get_gauss_samples
+import torch.nn.functional as F
 
 
 class TwoClassDist(object):
@@ -135,3 +136,9 @@ class TwoClassIndependentDist(object):
     def set_mean_std(self, i_class, mean, std):
         self.class_means.data[i_class] = mean.data
         self.class_log_stds.data[i_class] = th.log(std).data
+
+    def log_softmax(self, outs):
+        log_probs = th.stack([self.get_total_log_prob(i_class, outs)
+                              for i_class in range(2)], dim=-1)
+        log_softmaxed = F.log_softmax(log_probs, dim=1)
+        return log_softmaxed

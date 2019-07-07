@@ -114,3 +114,7 @@ def interpolate_nans_in_df(df):
                                  series[~mask])
         df.loc[:, row] = series
     return df
+
+
+def flatten_2d(a):
+    return a.view(len(a), -1)

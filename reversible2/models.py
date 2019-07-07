@@ -33,8 +33,9 @@ def deep_invertible(n_chans, input_time_length, n_chan_pad, filter_length_time, 
     pool_length = 3
     pool_stride = 1
     model = nn.Sequential()
-    model.add_module('padchan',
-                     ZeroPadChans(n_chan_pad // 2))
+    if n_chan_pad > 0:
+        model.add_module('padchan',
+                         ZeroPadChans(n_chan_pad // 2))
 
     model.add_module(
         "conv_time",
