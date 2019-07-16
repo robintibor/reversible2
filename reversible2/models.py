@@ -174,7 +174,10 @@ def add_dropout_before_convs(feature_model, p_conv, p_full):
                     new_children.append(c)
 
                 assert drop_inserted
-                m._modules[attr] = nn.Sequential(*new_children)
+                new_m = nn.Sequential(*new_children)
+                if hasattr(m._modules[attr], 'ctx_dict'):
+                    new_m.ctx_dict = dict()
+                m._modules[attr] = new_m
 
 
 
